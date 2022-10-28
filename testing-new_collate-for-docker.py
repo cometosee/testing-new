@@ -643,6 +643,9 @@ for time in range(1,221,10):
     true_y_test= np.concatenate(true_y_test)
     pred_y_test= np.concatenate(pred_y_test)
     
+    ## assign it into a list without keys 
+    predictions_holder.apppend(pd.DataFrame( predictions=true_y_test, time=time, person = list(range(outcomes_df.shape[0] ) ) , true_y_test=true_y_test) )
+    
     for i in range(86400):
         new_row = pd.DataFrame({'people': [i],
                     'time': [time],
@@ -659,6 +662,8 @@ for time in range(1,221,10):
             result = result.append(new_row)
     end = datetime.now() 
     print("cost:",(end-start).seconds/60,"minutes")      
+    
+all_predictions = pd.DataFrame.join(predictions_holder)
 result.to_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
 
 
