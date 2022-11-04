@@ -506,16 +506,16 @@ if(False):
   valid_dataset = TensorDataset(*data_va)
   valid_loader = DataLoader(train_dataset, batchSize, shuffle=False, collate_fn=preop_flow_med_bow_model.collate_time_series)
 
-def insert(df, i, df_add):
-    # insert data to ceratin rows
-    df1 = df.iloc[:i, :]
-    df2 = df.iloc[i:, :]
-    df_new = pd.concat([df1, df_add, df2], ignore_index=True)
-    return df_new
+# def insert(df, i, df_add):
+#     # insert data to ceratin rows
+#     df1 = df.iloc[:i, :]
+#     df2 = df.iloc[i:, :]
+#     df_new = pd.concat([df1, df_add, df2], ignore_index=True)
+#     return df_new
 
 #get index for time series
 
-result = pd.DataFrame({'people': [],
+predictions_holder = pd.DataFrame({'people': [],
                     'time': [],
                     'true value':[],
                    'Prediction': []})
@@ -525,18 +525,19 @@ model = torch.load(model_saving_path)
 time_index = [i for i in range(outcome_df.shape[0])]
 times=0
 #result = pd.read_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
-for time in range(1,221,10):
+for time in range(10,511,10):
     start=datetime.now() 
-    indices = torch.LongTensor([i for i in range(time,511)])
+    indices = torch.LongTensor([i for i in range(0,time+1)])
     dense_med_ids_time = torch.index_select(dense_med_ids,1,indices)
     dense_med_dose_time = torch.index_select(dense_med_dose,1,indices)
     dense_med_units_time = torch.index_select(dense_med_units,1,indices)
-
-
+    new_endtimes = endtimes["endtime"].copy(deep=True)
+    for i in range(endtimes.shape[0]):
+        new_endtimes[i] = min(endtimes["endtime"][i],time)
     if(task=="icu"):
         data_tr = [
                     torch.tensor(preops_tr.to_numpy(), dtype=torch.float32),
-                    torch.tensor(endtimes["endtime"] , dtype=int) ,
+                    torch.tensor(new_endtimes , dtype=int) ,
                     torch.tensor(bow_input.to_numpy(), dtype=torch.float32)  ,
                     dense_med_ids_time.coalesce() , 
                     dense_med_dose_time.coalesce() , 
@@ -642,24 +643,29 @@ for time in range(1,221,10):
             pred_y_test.append(y_pred.squeeze(-1).cpu().detach().numpy())
     true_y_test= np.concatenate(true_y_test)
     pred_y_test= np.concatenate(pred_y_test)
-    
-    for i in range(86400):
-        new_row = pd.DataFrame({'people': [i],
-                    'time': [time],
-                    'true value':[true_y_test[i]],
-                    'Prediction': [pred_y_test[i]]})
-        epoches = (time-10)/10 
-        if(time>10):
-            #get the index for the former same people
-            next_index = int((epoches+1)*i+epoches)
-            # temp = result[result['people']==i]
-            # next_index = temp[temp['time']==(time-10)].index[0]+1
-            result = insert(result,next_index,new_row)
-        else:
-            result = result.append(new_row)
+   
+    result = pd.DataFrame({'people': [int(i) for i in range(86400)],
+                    'time': [time]*86400,
+                    'true value':true_y_test,
+                   'Prediction': pred_y_test})
+    predictions_holder = predictions_holder.append(result,ignore_index=True)
+    # for i in range(86400):
+    #     new_row = pd.DataFrame({'people': [i],
+    #                 'time': [time],
+    #                 'true value':[true_y_test[i]],
+    #                 'Prediction': [pred_y_test[i]]})
+    #     epoches = (time-10)/10 
+    #     if(time>10):
+    #         #get the index for the former same people
+    #         next_index = int((epoches+1)*i+epoches)
+    #         # temp = result[result['people']==i]
+    #         # next_index = temp[temp['time']==(time-10)].index[0]+1
+    #         result = insert(result,next_index,new_row)
+    #     else:
+    #         result = result.append(new_row)
     end = datetime.now() 
-    print("cost:",(end-start).seconds/60,"minutes")      
-result.to_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
+    print("cost:",(end-start).seconds/60,"minutes")   
+predictions_holder.to_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
 
 
 
