@@ -828,7 +828,7 @@ total_test_loss = []
 time_index = [i for i in range(outcome_df.shape[0])]
 times=0
 #result = pd.read_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
-for time in [510]:
+for time in [30,60,90,120,150]:
     start=datetime.now() 
     indices = torch.LongTensor([i for i in range(0,time+1)])
     dense_med_ids_time = torch.index_select(dense_med_ids,1,indices)
