@@ -828,12 +828,13 @@ total_test_loss = []
 time_index = [i for i in range(outcome_df.shape[0])]
 times=0
 #result = pd.read_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
-for time in [30,60,90,120,150]:
+for time in [30,60,90,120,150,510]:
     start=datetime.now() 
     indices = torch.LongTensor([i for i in range(0,time+1)])
     dense_med_ids_time = torch.index_select(dense_med_ids,1,indices)
     dense_med_dose_time = torch.index_select(dense_med_dose,1,indices)
     dense_med_units_time = torch.index_select(dense_med_units,1,indices)
+    flowsheet_other_flow_time = torch.index_select(flowsheet_other_flow,1,indices)
 
     #30 minutes delayed
     # dense_med_ids_time._values()[time-30:] = dense_med_ids_time._values()[time-30]
@@ -845,15 +846,15 @@ for time in [30,60,90,120,150]:
         new_endtimes[i] = min(endtimes["endtime"][i],time)
     if(task=="icu"):
         data_tr = [
-                    torch.tensor(no_preops, dtype=torch.float32),
+                    torch.tensor(preops_tr.to_numpy(), dtype=torch.float32),
                     torch.tensor(new_endtimes , dtype=int) ,
                     torch.tensor(bow_input.iloc[train_index].to_numpy(), dtype=torch.float32)  ,
                     torch.index_select( dense_med_ids_time , 0 , torch.tensor(train_index) ).coalesce() , 
                     torch.index_select( dense_med_dose_time , 0 , torch.tensor(train_index) ).coalesce() , 
                     torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() ,
-                    flowsheet_very_dense[time_index,:,:], 
-                    flowsheet_other_flow.coalesce()  ,
-                    torch.tensor(outcome_df["outcome"])
+                    flowsheet_very_dense[train_index,:time+1,:] , 
+                    torch.index_select( flowsheet_other_flow , 0 , torch.tensor(train_index) ).coalesce() ,
+                    torch.tensor(outcome_df.iloc[train_index]["outcome"].values)
                     ]
     print("current start time:", time)
 
