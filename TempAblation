@@ -848,9 +848,9 @@ for time in [30,60,90,120,150]:
                     torch.tensor(no_preops, dtype=torch.float32),
                     torch.tensor(new_endtimes , dtype=int) ,
                     torch.tensor(bow_input.to_numpy(), dtype=torch.float32)  ,
-                    dense_med_ids_time.coalesce() , 
-                    dense_med_dose_time.coalesce() , 
-                    dense_med_units_time.coalesce() , 
+                    torch.index_select( dense_med_ids_time , 0 , torch.tensor(train_index) ).coalesce() , 
+                    torch.index_select( dense_med_dose_time , 0 , torch.tensor(train_index) ).coalesce() , 
+                    torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() , 
                     flowsheet_very_dense[time_index,:,:] , 
                     flowsheet_other_flow.coalesce() ,
                     torch.tensor(outcome_df["outcome"])
