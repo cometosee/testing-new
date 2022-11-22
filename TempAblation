@@ -841,18 +841,18 @@ for time in [30,60,90,120,150]:
     # dense_med_units_time._values()[time-30:] = dense_med_units_time._values()[time-30]
     
     new_endtimes = endtimes["endtime"].copy(deep=True)
-    for i in range(endtimes.shape[0]):
+    for i in train_index.values.tolist():
         new_endtimes[i] = min(endtimes["endtime"][i],time)
     if(task=="icu"):
         data_tr = [
                     torch.tensor(no_preops, dtype=torch.float32),
                     torch.tensor(new_endtimes , dtype=int) ,
-                    torch.tensor(bow_input.to_numpy(), dtype=torch.float32)  ,
+                    torch.tensor(bow_input.iloc[train_index].to_numpy(), dtype=torch.float32)  ,
                     torch.index_select( dense_med_ids_time , 0 , torch.tensor(train_index) ).coalesce() , 
                     torch.index_select( dense_med_dose_time , 0 , torch.tensor(train_index) ).coalesce() , 
-                    torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() , 
-                    flowsheet_very_dense[time_index,:,:] , 
-                    flowsheet_other_flow.coalesce() ,
+                    torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() ,
+                    flowsheet_very_dense[time_index,:,:], 
+                    flowsheet_other_flow.coalesce()  ,
                     torch.tensor(outcome_df["outcome"])
                     ]
     print("current start time:", time)
