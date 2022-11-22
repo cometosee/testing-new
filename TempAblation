@@ -705,7 +705,7 @@ model = preop_flow_med_bow_model.TS_lstm_Med_index(
     hidden_units_final=preopsWidthFinal,
     hidden_depth=preopsDepth,
     finalBN=finalBN,
-    input_shape=torch.tensor(no_preops, dtype=torch.float32).shape[1] + preop_mask_counter*num_preop_features,
+    input_shape=torch.tensor(preops_tr.to_numpy(), dtype=torch.float32).shape[1] + preop_mask_counter*num_preop_features,
     # this is done so that I dont have to write a seperate condition for endofcase where the current time is being appended to preops
     hidden_units_bow=bowWidth,
     hidden_units_final_bow=bowWidthFinal,
