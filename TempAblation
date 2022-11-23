@@ -671,11 +671,13 @@ if task == 'endofcase':  ##I only included the first two timepoints; doing the r
 #         very_dense_tr_mask = very_dense_tr_mask[resampled_indices, :, :]
 
 
+
 #remove the effect of preops
 no_preops = np.zeros([preops_tr.shape[0],preops_tr.shape[1]])
 #remove specify columns in preops:
-# preops_tr[["ASA","PlannedAnesthesia_0.0","PlannedAnesthesia_1.0",
-# "PlannedAnesthesia_nan","Pulse","Resp","SpO2","Temp","plannedDispo_Floor","plannedDispo_ICU","plannedDispo_Obs. unit","plannedDispo_Outpatient","plannedDispo_nan"]]=0
+lack_preop = preops_tr.copy(deep=True)
+lack_preop[["ASA","PlannedAnesthesia_0.0","PlannedAnesthesia_1.0",
+"PlannedAnesthesia_nan","Pulse","Resp","SpO2","Temp","plannedDispo_Floor","plannedDispo_ICU","plannedDispo_Obs. unit","plannedDispo_Outpatient","plannedDispo_nan"]]=0
 
 
 device = torch.device('cuda')
@@ -825,125 +827,148 @@ total_test_loss = []
 #     loss_tr = loss_tr / data_tr[0].shape[0]
 #     loss_tr_cls = loss_tr_cls / data_tr[0].shape[0]
 
+
+# new_bow_input = np.zeros([bow_input.shape[0],bow_input.shape[1]])
+# dense_med_ids._values()[:] = 0
+# dense_med_dose._values()[:] = 0
+# dense_med_units._values()[:] = 0
+# flowsheet_very_dense = torch.zeros(flowsheet_very_dense.shape)
+# flowsheet_other_flow._values()[:] = 0
+#result = pd.read_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
 time_index = [i for i in range(outcome_df.shape[0])]
 times=0
-#result = pd.read_feather("/storage1/christopherking/Active/ActFastData/Epic_TS_Prototyping/People_Prediction_DifferetTime.feather")
-for time in [30,60,90,120,150,510]:
-    start=datetime.now() 
-    indices = torch.LongTensor([i for i in range(0,time+1)])
-    dense_med_ids_time = torch.index_select(dense_med_ids,1,indices)
-    dense_med_dose_time = torch.index_select(dense_med_dose,1,indices)
-    dense_med_units_time = torch.index_select(dense_med_units,1,indices)
-    flowsheet_other_flow_time = torch.index_select(flowsheet_other_flow,1,indices)
+for preop in [preops_tr.to_numpy(),no_preops,lack_preop.to_numpy(),preops_tr.to_numpy()]:
+    times+=1
+    for time in [30,60,90,120,150]:
+        start=datetime.now() 
+        indices = torch.LongTensor([i for i in range(0,time+1)])
+        dense_med_ids_time = torch.index_select(dense_med_ids,1,indices)
+        dense_med_dose_time = torch.index_select(dense_med_dose,1,indices)
+        dense_med_units_time = torch.index_select(dense_med_units,1,indices)
+        flowsheet_other_flow_time = torch.index_select(flowsheet_other_flow,1,indices)
 
-    #30 minutes delayed
-    # dense_med_ids_time._values()[time-30:] = dense_med_ids_time._values()[time-30]
-    # dense_med_dose_time._values()[time-30:] = dense_med_dose_time._values()[time-30]
-    # dense_med_units_time._values()[time-30:] = dense_med_units_time._values()[time-30]
+        #30 minutes delayed
+        if(times==4):
+            print("30 minutes delayed")
+            dense_med_ids_time._values()[time-30:] = dense_med_ids_time._values()[time-30]
+            dense_med_dose_time._values()[time-30:] = dense_med_dose_time._values()[time-30]
+            dense_med_units_time._values()[time-30:] = dense_med_units_time._values()[time-30]
+        
+        new_endtimes = endtimes["endtime"].copy(deep=True)
+        for i in train_index.values.tolist():
+            new_endtimes[i] = min(endtimes["endtime"][i],time)
+        if(task=="icu"):
+            data_tr = [
+                        torch.tensor(preop, dtype=torch.float32),
+                        torch.tensor(new_endtimes.iloc[train_index].values  , dtype=int) ,
+                        torch.tensor(bow_input.iloc[train_index].to_numpy(), dtype=torch.float32)  ,
+                        torch.index_select( dense_med_ids_time , 0 , torch.tensor(train_index) ).coalesce() , 
+                        torch.index_select( dense_med_dose_time , 0 , torch.tensor(train_index) ).coalesce() , 
+                        torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() ,
+                        flowsheet_very_dense[train_index,:time+1,:] , 
+                        torch.index_select( flowsheet_other_flow_time , 0 , torch.tensor(train_index) ).coalesce() ,
+                        torch.tensor(outcome_df.iloc[train_index]["outcome"].values)
+                        ]
+
+        #     data_te = [
+        #         torch.tensor(preops_te.to_numpy(), dtype=torch.float32),
+        #         torch.tensor(endtimes.iloc[test_index]["endtime"].values, dtype=int),
+        #         torch.tensor(bow_input.iloc[test_index].to_numpy(), dtype=torch.float32),
+        #         torch.index_select(dense_med_ids, 0, torch.tensor(test_index)).coalesce(),
+        #         torch.index_select(dense_med_dose, 0, torch.tensor(test_index)).coalesce(),
+        #         torch.index_select(dense_med_units, 0, torch.tensor(test_index)).coalesce(),
+        #         flowsheet_very_dense[test_index, :, :],
+        #         torch.index_select(flowsheet_other_flow, 0, torch.tensor(test_index)).coalesce(),
+        #         torch.tensor(outcome_df.iloc[test_index]["outcome"].values)
+        # ]
+        print("current end time:", time)
+
+
+        loss_te = 0
+        loss_te_cls = 0
+        with torch.no_grad():
+            model.eval()
+            true_y_test = []
+            pred_y_test = []
+            nbatch = data_tr[0].shape[0] // batchSize
+            for i in range(nbatch):
+                these_index = torch.tensor(list(range(i * batchSize, (i + 1) * batchSize)), dtype=int)
+                local_data = [torch.index_select(x, 0, these_index) for x in data_tr]
+                if task == 'endofcase':
+                    local_data[1] = torch.hstack([local_data[1][:int(len(these_index) / 2)], local_data[-1][int(
+                        len(these_index) / 2):]])  # using hstack because vstack leads to two seperate tensors
+                    local_data[0][:, -1] = local_data[1]  #  this is being done because the last column has the current times which will be t1 timepoint for the second half of the batch
+                    local_data[-1] = torch.from_numpy(np.repeat([1,0], [int(batchSize/2), batchSize - int(batchSize/2)] ))
+                if (includeMissingnessMasks):  # appending the missingness masks in test data
+                    labels = local_data[-1]
+                    local_data.pop(-1)
+                    local_data.append(torch.tensor(preops_tr_mask.iloc[these_index].to_numpy(), dtype=torch.float32))
+                    local_data.append(very_dense_tr_mask[these_index, :, :])
+                    sparse_mask = torch.sparse_coo_tensor(local_data[7]._indices(), np.ones(len(local_data[7]._values())),
+                                                        local_data[7].size())
+                    local_data.append(sparse_mask)
+                    local_data.append(labels)  # to keep the code general adding it again here
+                data_valid = preop_flow_med_bow_model.collate_time_series(
+                    [[x[i] for x in local_data] for i in range(local_data[0].shape[0])])
+                data_valid[0][6] = data_valid[0][6].float()
+
+                if True:  # temporary for ablation studies
+                    ## inputs are assumed to be: [preops, durations, bow, med_index, med_dose, med_unit, flow_dense, flow_sparse (optional), labels (optional)]
+                    if testcondition == "preopOnly":
+                        data_valid[0][3] = torch.zeros(data_valid[0][3].shape)
+                        data_valid[0][4] = torch.zeros(data_valid[0][4].shape)
+                        data_valid[0][5] = torch.zeros(data_valid[0][5].shape)
+                        data_valid[0][6] = torch.zeros(data_valid[0][6].shape)
+                    if testcondition == 'MedOnly':
+                        data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
+                        data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
+                        data_valid[0][6] = torch.zeros(data_valid[0][6].shape)
+                    if testcondition == 'FlowOnly':
+                        data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
+                        data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
+                        data_valid[0][3] = torch.zeros(data_valid[0][3].shape)
+                        data_valid[0][4] = torch.zeros(data_valid[0][4].shape)
+                        data_valid[0][5] = torch.zeros(data_valid[0][5].shape)
+                    if testcondition == 'MedFlow':
+                        data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
+                        data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
+
+                for data_index in [0, 2, 3, 4, 5, 6]:
+                    data_valid[0][data_index] = data_valid[0][data_index].to(device)
+                y_pred, reg_loss = model(*data_valid[0])
+                cls_loss_te = criterion(y_pred.squeeze(-1), data_valid[1].float().to(device)).float()
+                test_loss = cls_loss_te + reg_loss
+                loss_te += test_loss.item()
+                loss_te_cls += cls_loss_te.item()
+
+                # values from the last epoch; it will get overwritten
+                # using test data only instead of validation data for evaluation currently because the validation will be done on a seperate data
+                true_y_test.append(data_valid[1].float().detach().numpy())
+                pred_y_test.append(y_pred.squeeze(-1).cpu().detach().numpy())
+
+        true_y_test= np.concatenate(true_y_test)
+        pred_y_test= np.concatenate(pred_y_test)
     
-    new_endtimes = endtimes["endtime"].copy(deep=True)
-    for i in train_index.values.tolist():
-        new_endtimes[i] = min(endtimes["endtime"][i],time)
-    if(task=="icu"):
-        data_tr = [
-                    torch.tensor(preops_tr.to_numpy(), dtype=torch.float32),
-                    torch.tensor(new_endtimes , dtype=int) ,
-                    torch.tensor(bow_input.iloc[train_index].to_numpy(), dtype=torch.float32)  ,
-                    torch.index_select( dense_med_ids_time , 0 , torch.tensor(train_index) ).coalesce() , 
-                    torch.index_select( dense_med_dose_time , 0 , torch.tensor(train_index) ).coalesce() , 
-                    torch.index_select( dense_med_units_time , 0 , torch.tensor(train_index) ).coalesce() ,
-                    flowsheet_very_dense[train_index,:time+1,:] , 
-                    torch.index_select( flowsheet_other_flow , 0 , torch.tensor(train_index) ).coalesce() ,
-                    torch.tensor(outcome_df.iloc[train_index]["outcome"].values)
-                    ]
-    print("current start time:", time)
+        # result = pd.DataFrame({'people': [int(i) for i in range(86400)],
+        #                 'time': [time]*86400,
+        #                 'true value':true_y_test,
+        #                'Prediction': pred_y_test})
+        # predictions_holder = predictions_holder.append(result,ignore_index=True)
 
 
-    loss_te = 0
-    loss_te_cls = 0
-    with torch.no_grad():
-        model.eval()
-        true_y_test = []
-        pred_y_test = []
-        nbatch = data_tr[0].shape[0] // batchSize
-        for i in range(nbatch):
-            these_index = torch.tensor(list(range(i * batchSize, (i + 1) * batchSize)), dtype=int)
-            local_data = [torch.index_select(x, 0, these_index) for x in data_tr]
-            if task == 'endofcase':
-                local_data[1] = torch.hstack([local_data[1][:int(len(these_index) / 2)], local_data[-1][int(
-                    len(these_index) / 2):]])  # using hstack because vstack leads to two seperate tensors
-                local_data[0][:, -1] = local_data[1]  #  this is being done because the last column has the current times which will be t1 timepoint for the second half of the batch
-                local_data[-1] = torch.from_numpy(np.repeat([1,0], [int(batchSize/2), batchSize - int(batchSize/2)] ))
-            if (includeMissingnessMasks):  # appending the missingness masks in test data
-                labels = local_data[-1]
-                local_data.pop(-1)
-                local_data.append(torch.tensor(preops_tr_mask.iloc[these_index].to_numpy(), dtype=torch.float32))
-                local_data.append(very_dense_tr_mask[these_index, :, :])
-                sparse_mask = torch.sparse_coo_tensor(local_data[7]._indices(), np.ones(len(local_data[7]._values())),
-                                                      local_data[7].size())
-                local_data.append(sparse_mask)
-                local_data.append(labels)  # to keep the code general adding it again here
-            data_valid = preop_flow_med_bow_model.collate_time_series(
-                [[x[i] for x in local_data] for i in range(local_data[0].shape[0])])
-            data_valid[0][6] = data_valid[0][6].float()
+        end = datetime.now() 
+        print("cost:",(end-start).seconds/60,"minutes")
 
-            if True:  # temporary for ablation studies
-                ## inputs are assumed to be: [preops, durations, bow, med_index, med_dose, med_unit, flow_dense, flow_sparse (optional), labels (optional)]
-                if testcondition == "preopOnly":
-                    data_valid[0][3] = torch.zeros(data_valid[0][3].shape)
-                    data_valid[0][4] = torch.zeros(data_valid[0][4].shape)
-                    data_valid[0][5] = torch.zeros(data_valid[0][5].shape)
-                    data_valid[0][6] = torch.zeros(data_valid[0][6].shape)
-                if testcondition == 'MedOnly':
-                    data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
-                    data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
-                    data_valid[0][6] = torch.zeros(data_valid[0][6].shape)
-                if testcondition == 'FlowOnly':
-                    data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
-                    data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
-                    data_valid[0][3] = torch.zeros(data_valid[0][3].shape)
-                    data_valid[0][4] = torch.zeros(data_valid[0][4].shape)
-                    data_valid[0][5] = torch.zeros(data_valid[0][5].shape)
-                if testcondition == 'MedFlow':
-                    data_valid[0][0] = torch.zeros(data_valid[0][0].shape)
-                    data_valid[0][2] = torch.zeros(data_valid[0][2].shape)
-
-            for data_index in [0, 2, 3, 4, 5, 6]:
-                data_valid[0][data_index] = data_valid[0][data_index].to(device)
-            y_pred, reg_loss = model(*data_valid[0])
-            cls_loss_te = criterion(y_pred.squeeze(-1), data_valid[1].float().to(device)).float()
-            test_loss = cls_loss_te + reg_loss
-            loss_te += test_loss.item()
-            loss_te_cls += cls_loss_te.item()
-
-            # values from the last epoch; it will get overwritten
-            # using test data only instead of validation data for evaluation currently because the validation will be done on a seperate data
-            true_y_test.append(data_valid[1].float().detach().numpy())
-            pred_y_test.append(y_pred.squeeze(-1).cpu().detach().numpy())
-
-    true_y_test= np.concatenate(true_y_test)
-    pred_y_test= np.concatenate(pred_y_test)
-   
-    # result = pd.DataFrame({'people': [int(i) for i in range(86400)],
-    #                 'time': [time]*86400,
-    #                 'true value':true_y_test,
-    #                'Prediction': pred_y_test})
-    # predictions_holder = predictions_holder.append(result,ignore_index=True)
-
-
-    end = datetime.now() 
-    print("cost:",(end-start).seconds/60,"minutes")
-
-    test_auroc = roc_auc_score(true_y_test, pred_y_test)
-    test_auprc = average_precision_score(true_y_test, pred_y_test)
-    print("Test AUROC and AUPRC values are ", np.round(test_auroc, 4), np.round(test_auprc, 4))
-    fpr_roc, tpr_roc, thresholds_roc = roc_curve(true_y_test, pred_y_test, drop_intermediate=False)
-    precision_prc, recall_prc, thresholds_prc = precision_recall_curve(true_y_test, pred_y_test)
-    # interpolation in ROC
-    mean_fpr = np.linspace(0, 1, 100)
-    tpr_inter = np.interp(mean_fpr, fpr_roc, tpr_roc)
-    mean_fpr = np.round(mean_fpr, decimals=2)
-    print("Sensitivity at 90%  specificity is ", np.round(tpr_inter[np.where(mean_fpr == 0.10)], 2))
+        test_auroc = roc_auc_score(true_y_test, pred_y_test)
+        test_auprc = average_precision_score(true_y_test, pred_y_test)
+        print("Test AUROC and AUPRC values are ", np.round(test_auroc, 4), np.round(test_auprc, 4))
+        fpr_roc, tpr_roc, thresholds_roc = roc_curve(true_y_test, pred_y_test, drop_intermediate=False)
+        precision_prc, recall_prc, thresholds_prc = precision_recall_curve(true_y_test, pred_y_test)
+        # interpolation in ROC
+        mean_fpr = np.linspace(0, 1, 100)
+        tpr_inter = np.interp(mean_fpr, fpr_roc, tpr_roc)
+        mean_fpr = np.round(mean_fpr, decimals=2)
+        print("Sensitivity at 90%  specificity is ", np.round(tpr_inter[np.where(mean_fpr == 0.10)], 2))
 
         # loss_te = loss_te / data_te[0].shape[0]
         # loss_te_cls = loss_te_cls / data_te[0].shape[0]
